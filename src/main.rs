@@ -1,50 +1,134 @@
+use std::fs::OpenOptions;
+use std::io::BufReader;
+
 use eframe::{Frame, egui};
 use egui::{Color32, RichText, ScrollArea};
+use serde::{Deserialize, Serialize};
 
-#[derive(Default)]
+#[derive(Serialize, Deserialize)]
 struct ListApp {
     tasks: Vec<Task>,
+    #[serde(skip, default = "String::new")]
     new_task_text: String,
     categories: Vec<Category>,
+    #[serde(skip, default = "String::new")]
     new_category_name: String,
     selected_category: usize,
     next_color_index: usize,
 }
 
-#[derive(Clone)]
+impl Default for ListApp {
+    fn default() -> Self {
+        Self {
+            tasks: Vec::new(),
+            new_task_text: String::new(),
+            categories: Vec::new(),
+            new_category_name: String::new(),
+            selected_category: 0,
+            next_color_index: 0,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 struct Task {
     text: String,
     completed: bool,
     category: usize,
 }
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Category {
     name: String,
-    color: Color32,
+    color: SerializableColor,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+struct SerializableColor {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+impl From<Color32> for SerializableColor {
+    fn from(color: Color32) -> Self {
+        Self {
+            r: color.r(),
+            g: color.g(),
+            b: color.b(),
+            a: color.a(),
+        }
+    }
+}
+
+impl From<SerializableColor> for Color32 {
+    fn from(color: SerializableColor) -> Self {
+        Color32::from_rgba_premultiplied(color.r, color.g, color.b, color.a)
+    }
 }
 
 // Палитра цветов для категорий
 const CATEGORY_COLORS: [Color32; 12] = [
-    Color32::from_rgb(173, 216, 230), // light blue
-    Color32::from_rgb(144, 238, 144), // light green
-    Color32::from_rgb(255, 182, 193), // light pink
-    Color32::from_rgb(255, 255, 224), // light yellow
-    Color32::from_rgb(216, 191, 216), // light purple
-    Color32::from_rgb(255, 215, 0),   // gold
-    Color32::from_rgb(255, 150, 100), // orange
-    Color32::from_rgb(100, 200, 255), // light blue 2
-    Color32::from_rgb(200, 100, 255), // purple
-    Color32::from_rgb(255, 100, 150), // pink
-    Color32::from_rgb(100, 255, 150), // mint
-    Color32::from_rgb(200, 200, 100), // olive
+    Color32::from_rgb(173, 216, 230),
+    Color32::from_rgb(144, 238, 144),
+    Color32::from_rgb(255, 182, 193),
+    Color32::from_rgb(255, 255, 224),
+    Color32::from_rgb(216, 191, 216),
+    Color32::from_rgb(255, 215, 0),
+    Color32::from_rgb(255, 150, 100),
+    Color32::from_rgb(100, 200, 255),
+    Color32::from_rgb(200, 100, 255),
+    Color32::from_rgb(255, 100, 150),
+    Color32::from_rgb(100, 255, 150),
+    Color32::from_rgb(200, 200, 100),
 ];
 
 impl Default for Category {
     fn default() -> Self {
         Self {
             name: "Общие".to_string(),
-            color: Color32::GRAY,
+            color: SerializableColor::from(Color32::GRAY),
+        }
+    }
+}
+
+const STATEPATH: &str = "state.json";
+
+fn save_state<T: Serialize>(state: &T) {
+    // Сначала сериализуем в строку для проверки
+    match serde_json::to_string_pretty(state) {
+        Ok(json_string) => {
+            let json_len = json_string.len(); // Сохраняем длину до перемещения
+            // Проверяем, что JSON валидный
+            if serde_json::from_str::<serde_json::Value>(&json_string).is_ok() {
+                match std::fs::write(STATEPATH, &json_string) {
+                    Ok(_) => println!("✅ Сохранено успешно ({} байт)", json_len),
+                    Err(e) => eprintln!("❌ Ошибка записи файла: {}", e),
+                }
+            } else {
+                eprintln!("❌ Ошибка: создан невалидный JSON");
+            }
+        }
+        Err(e) => eprintln!("❌ Ошибка сериализации: {}", e),
+    }
+}
+
+fn load_state<T: serde::de::DeserializeOwned>() -> Option<T> {
+    let file = OpenOptions::new()
+        .read(true)
+        .open(STATEPATH)
+        .ok()?;
+    
+    let reader = BufReader::new(file);
+    match serde_json::from_reader(reader) {
+        Ok(state) => {
+            println!("✅ Загружено успешно");
+            Some(state)
+        }
+        Err(e) => {
+            eprintln!("❌ Ошибка загрузки: {}", e);
+            None
         }
     }
 }
@@ -68,7 +152,7 @@ impl ListApp {
 
             self.categories.push(Category {
                 name: self.new_category_name.clone(),
-                color,
+                color: SerializableColor::from(color),
             });
             self.new_category_name.clear();
         }
@@ -84,21 +168,33 @@ impl eframe::App for ListApp {
         if self.categories.is_empty() {
             self.categories.push(Category {
                 name: "Общие".to_string(),
-                color: CATEGORY_COLORS[0],
+                color: SerializableColor::from(CATEGORY_COLORS[0]),
             });
             self.categories.push(Category {
                 name: "Работа".to_string(),
-                color: CATEGORY_COLORS[1],
+                color: SerializableColor::from(CATEGORY_COLORS[1]),
             });
             self.categories.push(Category {
                 name: "Личное".to_string(),
-                color: CATEGORY_COLORS[2],
+                color: SerializableColor::from(CATEGORY_COLORS[2]),
             });
             self.next_color_index = 3;
         }
 
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
-            ui.heading("Менеджер задач с категориями");
+            ui.horizontal(|ui| {
+                ui.heading("Менеджер задач с категориями");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("💾 Сохранить").clicked() {
+                        save_state(self);
+                    }
+                    if ui.button("📂 Загрузить").clicked() {
+                        if let Some(loaded) = load_state::<ListApp>() {
+                            *self = loaded;
+                        }
+                    }
+                });
+            });
             ui.separator();
         });
 
@@ -108,13 +204,15 @@ impl eframe::App for ListApp {
                 ui.heading("Категории");
 
                 for (i, category) in self.categories.iter().enumerate() {
-                    let button_text = RichText::new(&category.name).color(category.color);
-                    let button =
-                        egui::Button::new(button_text).fill(if self.selected_category == i {
+                    let color: Color32 = category.color.into();
+                    let button_text = RichText::new(&category.name).color(color);
+                    let button = egui::Button::new(button_text).fill(
+                        if self.selected_category == i {
                             ctx.style().visuals.widgets.active.bg_fill
                         } else {
                             Color32::TRANSPARENT
-                        });
+                        },
+                    );
 
                     if ui.add(button).clicked() {
                         self.selected_category = i;
@@ -137,102 +235,117 @@ impl eframe::App for ListApp {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let current_category = &self.categories[self.selected_category];
+            if self.selected_category < self.categories.len() {
+                let current_category = &self.categories[self.selected_category];
 
-            ui.heading(format!("Задачи: {}", current_category.name));
-            ui.separator();
+                ui.heading(format!("Задачи: {}", current_category.name));
+                ui.separator();
 
-            let total_tasks = self
-                .tasks
-                .iter()
-                .filter(|t| t.category == self.selected_category)
-                .count();
-            let completed_tasks = self
-                .tasks
-                .iter()
-                .filter(|t| t.category == self.selected_category && t.completed)
-                .count();
+                let total_tasks = self
+                    .tasks
+                    .iter()
+                    .filter(|t| t.category == self.selected_category)
+                    .count();
+                let completed_tasks = self
+                    .tasks
+                    .iter()
+                    .filter(|t| t.category == self.selected_category && t.completed)
+                    .count();
 
-            ui.horizontal(|ui| {
-                ui.label(format!("Всего: {}", total_tasks));
-                ui.label(format!("Выполнено: {}", completed_tasks));
-                if total_tasks > 0 {
-                    ui.label(format!(
-                        "Прогресс: {:.0}%",
-                        (completed_tasks as f32 / total_tasks as f32) * 100.0
-                    ));
-                }
-            });
-
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.new_task_text)
-                        .hint_text("Новая задача...")
-                        .min_size(egui::Vec2::new(200.0, 0.0)),
-                );
-                if ui.button("Добавить").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter))
-                {
-                    self.add_task();
-                }
-            });
-
-            ui.separator();
-
-            ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .max_height(400.0)
-                .show(ui, |ui| {
-                    let mut tasks_to_remove = Vec::new();
-
-                    for (i, task) in self.tasks.iter_mut().enumerate() {
-                        if task.category == self.selected_category {
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut task.completed, "");
-
-                                if task.completed {
-                                    ui.add(egui::Label::new(
-                                        egui::RichText::new(&task.text)
-                                            .strikethrough()
-                                            .color(Color32::GRAY),
-                                    ));
-                                } else {
-                                    ui.label(&task.text);
-                                }
-
-                                if ui.button("❌").clicked() {
-                                    tasks_to_remove.push(i);
-                                }
-                            });
-                        }
-                    }
-
-                    for &index in tasks_to_remove.iter().rev() {
-                        self.tasks.remove(index);
+                ui.horizontal(|ui| {
+                    ui.label(format!("Всего: {}", total_tasks));
+                    ui.label(format!("Выполнено: {}", completed_tasks));
+                    if total_tasks > 0 {
+                        ui.label(format!(
+                            "Прогресс: {:.0}%",
+                            (completed_tasks as f32 / total_tasks as f32) * 100.0
+                        ));
                     }
                 });
 
-            ui.separator();
+                ui.separator();
 
-            if ui.button("🗑️ Удалить выполненные").clicked() {
-                self.delete_completed_tasks();
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.new_task_text)
+                            .hint_text("Новая задача...")
+                            .min_size(egui::Vec2::new(200.0, 0.0)),
+                    );
+                    if ui.button("Добавить").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    {
+                        self.add_task();
+                    }
+                });
+
+                ui.separator();
+
+                ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .max_height(400.0)
+                    .show(ui, |ui| {
+                        let mut tasks_to_remove = Vec::new();
+
+                        for (i, task) in self.tasks.iter_mut().enumerate() {
+                            if task.category == self.selected_category {
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut task.completed, "");
+
+                                    if task.completed {
+                                        ui.add(egui::Label::new(
+                                            egui::RichText::new(&task.text)
+                                                .strikethrough()
+                                                .color(Color32::GRAY),
+                                        ));
+                                    } else {
+                                        ui.label(&task.text);
+                                    }
+
+                                    if ui.button("❌").clicked() {
+                                        tasks_to_remove.push(i);
+                                    }
+                                });
+                            }
+                        }
+
+                        for &index in tasks_to_remove.iter().rev() {
+                            self.tasks.remove(index);
+                        }
+                    });
+
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    if ui.button("💾 Сохранить").clicked() {
+                        save_state(self);
+                    }
+                    if ui.button("📂 Загрузить").clicked() {
+                        if let Some(loaded) = load_state::<ListApp>() {
+                            *self = loaded;
+                        }
+                    }
+                });
+                
+                if ui.button("🗑️ Удалить выполненные").clicked() {
+                    self.delete_completed_tasks();
+                }
+
+                // Обновляем заголовок окна
+                let current_tasks_count = self
+                    .tasks
+                    .iter()
+                    .filter(|t| t.category == self.selected_category && !t.completed)
+                    .count();
+
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+                    format!(
+                        "Задачи: {} - {} невыполненных",
+                        self.categories[self.selected_category].name, current_tasks_count
+                    )
+                    .into(),
+                ));
             }
         });
-
-        let current_tasks_count = self
-            .tasks
-            .iter()
-            .filter(|t| t.category == self.selected_category && !t.completed)
-            .count();
-
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(
-            format!(
-                "Задачи: {} - {} невыполненных",
-                self.categories[self.selected_category].name, current_tasks_count
-            )
-            .into(),
-        ));
     }
 }
 
@@ -247,6 +360,10 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Менеджер задач с категориями",
         options,
-        Box::new(|_cc| Ok(Box::new(ListApp::default()))),
+        Box::new(|_cc| {
+            // Загружаем сохраненное состояние при старте
+            let app = load_state::<ListApp>().unwrap_or_default();
+            Ok(Box::new(app))
+        }),
     )
 }

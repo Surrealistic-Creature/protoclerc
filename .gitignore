@@ -1,1 +1,4 @@
 /target
+*.kra
+plan.kra~
+*.json

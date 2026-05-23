@@ -10,6 +10,7 @@ struct ListApp {
     tasks: Vec<Task>,
     #[serde(skip, default = "String::new")]
     new_task_text: String,
+    task_description: String,
     categories: Vec<Category>,
     #[serde(skip, default = "String::new")]
     new_category_name: String,
@@ -22,6 +23,7 @@ impl Default for ListApp {
         Self {
             tasks: Vec::new(),
             new_task_text: String::new(),
+            task_description: String::new(),
             categories: Vec::new(),
             new_category_name: String::new(),
             selected_category: 0,
@@ -35,6 +37,7 @@ struct Task {
     text: String,
     completed: bool,
     category: usize,
+    task_description: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -115,11 +118,8 @@ fn save_state<T: Serialize>(state: &T) {
 }
 
 fn load_state<T: serde::de::DeserializeOwned>() -> Option<T> {
-    let file = OpenOptions::new()
-        .read(true)
-        .open(STATEPATH)
-        .ok()?;
-    
+    let file = OpenOptions::new().read(true).open(STATEPATH).ok()?;
+
     let reader = BufReader::new(file);
     match serde_json::from_reader(reader) {
         Ok(state) => {
@@ -140,8 +140,10 @@ impl ListApp {
                 text: self.new_task_text.clone(),
                 completed: false,
                 category: self.selected_category,
+                task_description: self.task_description.clone(),
             });
             self.new_task_text.clear();
+            self.task_description.clear();
         }
     }
 
@@ -206,13 +208,12 @@ impl eframe::App for ListApp {
                 for (i, category) in self.categories.iter().enumerate() {
                     let color: Color32 = category.color.into();
                     let button_text = RichText::new(&category.name).color(color);
-                    let button = egui::Button::new(button_text).fill(
-                        if self.selected_category == i {
+                    let button =
+                        egui::Button::new(button_text).fill(if self.selected_category == i {
                             ctx.style().visuals.widgets.active.bg_fill
                         } else {
                             Color32::TRANSPARENT
-                        },
-                    );
+                        });
 
                     if ui.add(button).clicked() {
                         self.selected_category = i;
@@ -276,6 +277,11 @@ impl eframe::App for ListApp {
                     {
                         self.add_task();
                     }
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.task_description)
+                            .hint_text("Описание задачи...")
+                            .min_size(egui::Vec2::new(200.0, 0.0)),
+                    )
                 });
 
                 ui.separator();
@@ -299,6 +305,13 @@ impl eframe::App for ListApp {
                                         ));
                                     } else {
                                         ui.label(&task.text);
+                                    }
+                                    if !task.task_description.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(&task.task_description)
+                                                .size(12.0)
+                                                .color(Color32::GRAY),
+                                        );
                                     }
 
                                     if ui.button("❌").clicked() {
@@ -325,7 +338,7 @@ impl eframe::App for ListApp {
                         }
                     }
                 });
-                
+
                 if ui.button("🗑️ Удалить выполненные").clicked() {
                     self.delete_completed_tasks();
                 }

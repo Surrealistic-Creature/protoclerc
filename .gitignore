@@ -1,4 +1,5 @@
 /target
 *.kra
 plan.kra~
+protoclerc.kra~
 *.json

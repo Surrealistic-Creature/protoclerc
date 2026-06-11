@@ -1,15 +1,15 @@
-use std::fs::OpenOptions;
-use std::io::BufReader;
-
+use chrono::{DateTime, Local, Utc};
 use eframe::{Frame, egui};
 use egui::{Color32, RichText, ScrollArea};
 use serde::{Deserialize, Serialize};
+use std::io::BufReader;
 
 #[derive(Serialize, Deserialize)]
 struct ListApp {
     tasks: Vec<Task>,
     #[serde(skip, default = "String::new")]
     new_task_text: String,
+    #[serde(skip, default = "String::new")]
     task_description: String,
     categories: Vec<Category>,
     #[serde(skip, default = "String::new")]
@@ -38,6 +38,8 @@ struct Task {
     completed: bool,
     category: usize,
     task_description: String,
+    created_at: DateTime<Utc>,
+    completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -73,18 +75,18 @@ impl From<SerializableColor> for Color32 {
 
 // Палитра цветов для категорий
 const CATEGORY_COLORS: [Color32; 12] = [
-    Color32::from_rgb(173, 216, 230),
-    Color32::from_rgb(144, 238, 144),
-    Color32::from_rgb(255, 182, 193),
-    Color32::from_rgb(255, 255, 224),
-    Color32::from_rgb(216, 191, 216),
-    Color32::from_rgb(255, 215, 0),
-    Color32::from_rgb(255, 150, 100),
-    Color32::from_rgb(100, 200, 255),
-    Color32::from_rgb(200, 100, 255),
-    Color32::from_rgb(255, 100, 150),
-    Color32::from_rgb(100, 255, 150),
-    Color32::from_rgb(200, 200, 100),
+    Color32::from_rgb(173, 216, 230), // light blue
+    Color32::from_rgb(144, 238, 144), // light green
+    Color32::from_rgb(255, 182, 193), // light pink
+    Color32::from_rgb(255, 255, 224), // light yellow
+    Color32::from_rgb(216, 191, 216), // light purple
+    Color32::from_rgb(255, 215, 0),   // gold
+    Color32::from_rgb(255, 150, 100), // orange
+    Color32::from_rgb(100, 200, 255), // light blue 2
+    Color32::from_rgb(200, 100, 255), // purple
+    Color32::from_rgb(255, 100, 150), // pink
+    Color32::from_rgb(100, 255, 150), // mint
+    Color32::from_rgb(200, 200, 100), // olive
 ];
 
 impl Default for Category {
@@ -99,28 +101,19 @@ impl Default for Category {
 const STATEPATH: &str = "state.json";
 
 fn save_state<T: Serialize>(state: &T) {
-    // Сначала сериализуем в строку для проверки
     match serde_json::to_string_pretty(state) {
-        Ok(json_string) => {
-            let json_len = json_string.len(); // Сохраняем длину до перемещения
-            // Проверяем, что JSON валидный
-            if serde_json::from_str::<serde_json::Value>(&json_string).is_ok() {
-                match std::fs::write(STATEPATH, &json_string) {
-                    Ok(_) => println!("✅ Сохранено успешно ({} байт)", json_len),
-                    Err(e) => eprintln!("❌ Ошибка записи файла: {}", e),
-                }
-            } else {
-                eprintln!("❌ Ошибка: создан невалидный JSON");
-            }
-        }
+        Ok(json_string) => match std::fs::write(STATEPATH, &json_string) {
+            Ok(_) => println!("✅ Сохранено успешно ({} байт)", json_string.len()),
+            Err(e) => eprintln!("❌ Ошибка записи файла: {}", e),
+        },
         Err(e) => eprintln!("❌ Ошибка сериализации: {}", e),
     }
 }
 
 fn load_state<T: serde::de::DeserializeOwned>() -> Option<T> {
-    let file = OpenOptions::new().read(true).open(STATEPATH).ok()?;
-
+    let file = std::fs::File::open(STATEPATH).ok()?;
     let reader = BufReader::new(file);
+
     match serde_json::from_reader(reader) {
         Ok(state) => {
             println!("✅ Загружено успешно");
@@ -141,6 +134,8 @@ impl ListApp {
                 completed: false,
                 category: self.selected_category,
                 task_description: self.task_description.clone(),
+                created_at: Utc::now(),
+                completed_at: None,
             });
             self.new_task_text.clear();
             self.task_description.clear();
@@ -266,22 +261,26 @@ impl eframe::App for ListApp {
 
                 ui.separator();
 
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.new_task_text)
-                            .hint_text("Новая задача...")
-                            .min_size(egui::Vec2::new(200.0, 0.0)),
-                    );
-                    if ui.button("Добавить").clicked()
-                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    {
-                        self.add_task();
-                    }
+                // Секция добавления задачи
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.new_task_text)
+                                .hint_text("Название задачи...")
+                                .min_size(egui::Vec2::new(200.0, 0.0)),
+                        );
+                        if ui.button("Добавить").clicked()
+                            || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            self.add_task();
+                        }
+                    });
+
                     ui.add(
                         egui::TextEdit::multiline(&mut self.task_description)
-                            .hint_text("Описание задачи...")
-                            .min_size(egui::Vec2::new(200.0, 0.0)),
-                    )
+                            .hint_text("Описание задачи (опционально)...")
+                            .min_size(egui::Vec2::new(200.0, 50.0)),
+                    );
                 });
 
                 ui.separator();
@@ -295,24 +294,67 @@ impl eframe::App for ListApp {
                         for (i, task) in self.tasks.iter_mut().enumerate() {
                             if task.category == self.selected_category {
                                 ui.horizontal(|ui| {
+                                    // Запоминаем старый статус до чекбокса
+                                    let was_completed = task.completed;
+
+                                    // Чекбокс (пользователь может изменить статус)
                                     ui.checkbox(&mut task.completed, "");
 
-                                    if task.completed {
-                                        ui.add(egui::Label::new(
-                                            egui::RichText::new(&task.text)
-                                                .strikethrough()
-                                                .color(Color32::GRAY),
-                                        ));
-                                    } else {
-                                        ui.label(&task.text);
+                                    // Проверяем, изменился ли статус
+                                    if !was_completed && task.completed {
+                                        // Только что отметили как выполненную
+                                        task.completed_at = Some(Utc::now());
+                                    } else if was_completed && !task.completed {
+                                        // Только что сняли отметку
+                                        task.completed_at = None;
                                     }
-                                    if !task.task_description.is_empty() {
+
+                                    ui.vertical(|ui| {
+                                        if task.completed {
+                                            ui.add(egui::Label::new(
+                                                egui::RichText::new(&task.text)
+                                                    .strikethrough()
+                                                    .color(Color32::GRAY),
+                                            ));
+                                        } else {
+                                            ui.label(&task.text);
+                                        }
+
+                                        // Показываем время создания (конвертированное в локальное)
+                                        let local_created = task.created_at.with_timezone(&Local);
                                         ui.label(
-                                            egui::RichText::new(&task.task_description)
-                                                .size(12.0)
-                                                .color(Color32::GRAY),
+                                            egui::RichText::new(format!(
+                                                "Создано: {}",
+                                                local_created.format("%d.%m.%Y %H:%M")
+                                            ))
+                                            .size(10.0)
+                                            .color(Color32::GRAY),
                                         );
-                                    }
+
+                                        // Показываем время выполнения, если задача выполнена (конвертированное в локальное)
+                                        if let Some(completed_time) = task.completed_at {
+                                            let local_completed =
+                                                completed_time.with_timezone(&Local);
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "Выполнено: {}",
+                                                    local_completed.format("%d.%m.%Y %H:%M")
+                                                ))
+                                                .size(10.0)
+                                                .color(Color32::GREEN),
+                                            );
+                                        }
+
+                                        // Показываем описание, если оно есть
+                                        if !task.task_description.is_empty() {
+                                            ui.label(
+                                                egui::RichText::new(&task.task_description)
+                                                    .size(12.0)
+                                                    .color(Color32::GRAY)
+                                                    .italics(),
+                                            );
+                                        }
+                                    });
 
                                     if ui.button("❌").clicked() {
                                         tasks_to_remove.push(i);

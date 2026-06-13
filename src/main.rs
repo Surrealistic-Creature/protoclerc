@@ -155,6 +155,39 @@ impl ListApp {
         }
     }
 
+    fn delete_category(&mut self, index: usize) -> bool {
+        // Проверка валидности индекса
+        if index >= self.categories.len() {
+            return false;
+        }
+
+        // Нельзя удалить первые три категории (Общие, Работа, Личное)
+        if index < 3 {
+            return false;
+        }
+
+        // Перенос задач удаляемой категории в "Общие" (индекс 0)
+        for task in self.tasks.iter_mut() {
+            if task.category == index {
+                task.category = 0;
+            } else if task.category > index {
+                task.category -= 1;
+            }
+        }
+
+        // Удаление категории
+        self.categories.remove(index);
+
+        // Корректировка выбранной категории
+        if self.selected_category == index {
+            self.selected_category = 0;
+        } else if self.selected_category > index {
+            self.selected_category -= 1;
+        }
+
+        true
+    }
+
     fn delete_completed_tasks(&mut self) {
         self.tasks.retain(|task| !task.completed);
     }
@@ -200,6 +233,10 @@ impl eframe::App for ListApp {
             .show(ctx, |ui| {
                 ui.heading("Категории");
 
+                // Временные переменные для сбора изменений
+                let mut new_selected = self.selected_category;
+                let mut category_to_delete: Option<usize> = None;
+
                 for (i, category) in self.categories.iter().enumerate() {
                     let color: Color32 = category.color.into();
                     let button_text = RichText::new(&category.name).color(color);
@@ -210,9 +247,24 @@ impl eframe::App for ListApp {
                             Color32::TRANSPARENT
                         });
 
-                    if ui.add(button).clicked() {
-                        self.selected_category = i;
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.add(button).clicked() {
+                            new_selected = i;
+                        }
+
+                        // Кнопка удаления категории (только для индекса >= 3)
+                        if i >= 3 {
+                            if ui.button("🗑️").clicked() {
+                                category_to_delete = Some(i);
+                            }
+                        }
+                    });
+                }
+
+                // Применяем изменения после цикла
+                self.selected_category = new_selected;
+                if let Some(index) = category_to_delete {
+                    self.delete_category(index);
                 }
 
                 ui.separator();
